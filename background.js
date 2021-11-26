@@ -1,4 +1,23 @@
-const clear = tabId => setTimeout(() => chrome.action.setBadgeText({text: "", tabId}), 1500);
+// this function is run in the current tab
+async function copy(tab) {
+  try {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/html": new Blob([`<a href="${tab.url}">${tab.title}</a>`], {
+          type: "text/html",
+        }),
+        "text/plain": new Blob([tab.url], {type: "text/plain"}),
+      }),
+    ]);
+    chrome.runtime.sendMessage({tab, copied: true});
+  } catch ({message}) {
+    chrome.runtime.sendMessage({tab, copied: false, message});
+  }
+}
+
+// the remaining code is run only in the extension service worker
+const clear = tabId =>
+  setTimeout(() => chrome.action.setBadgeText({text: "", tabId}), 1100);
 
 function success(tabId) {
   chrome.action.setBadgeBackgroundColor({color: "green", tabId});
@@ -12,33 +31,28 @@ function failure(tabId) {
   clear(tabId);
 }
 
-async function copy(title, url) {
-  try {
-    const html = new Blob([`<a href="${url}">${title}</a>`], {type:"text/html"});
-    const text = new Blob([`${title}: ${url}`], {type:"text/plain"});
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        [html.type]: html,
-        [text.type]: text
-      })
-    ]);
-    return true
-  } catch(err) {
-    console.error(err.name, err.message);
-    return false
-  }
-}
-
 chrome.action.onClicked.addListener(tab => {
-  tab.id % 2 ? success(tab.id) : failure(tab.id);
   chrome.scripting.executeScript(
     {
       target: {tabId: tab.id},
       func: copy,
-      args: [tab.title, tab.url]
+      args: [tab],
     },
-    result => {
-      console.log("success?", result);
+    () => {
+      const error = chrome.runtime.lastError; // can't run this in chrome:// urls
+      if (error) {
+        failure(tab.id);
+        console.error("Failed to copy url:", error.message);
+      }
     }
-  )
+  );
+});
+
+chrome.runtime.onMessage.addListener(({tab, copied, message}) => {
+  if (copied) {
+    success(tab.id);
+  } else {
+    failure(tab.id);
+    console.error("Failed to copy url:", message);
+  }
 });
